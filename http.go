@@ -8,7 +8,9 @@ import (
 	"strings"
 	"sync"
 
+	pb "github.com/13sai/gcache/gcachepb"
 	"github.com/13sai/gcache/hash"
+	"google.golang.org/protobuf/proto"
 )
 
 const defaultBasePath = "/cache/"
@@ -57,8 +59,14 @@ func (hp *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body, err := proto.Marshal(&pb.Response{Value: view.Clone()})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write(view.Clone())
+	w.Write(body)
 }
 
 func (hp *HTTPPool) Set(peers ...string) {
@@ -87,23 +95,26 @@ type httpGetter struct {
 	baseURL string
 }
 
-func (hg *httpGetter) Get(group, key string) ([]byte, error) {
+func (hg *httpGetter) Get(in *pb.Request, out *pb.Response) error {
 	path := fmt.Sprintf("%s%s/%s",
-		hg.baseURL, url.QueryEscape(group), url.QueryEscape(key))
+		hg.baseURL, url.QueryEscape(in.GetGroup()), url.QueryEscape(in.GetKey()))
 	res, err := http.Get(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server status %v", res.Status)
+		return fmt.Errorf("server status %v", res.Status)
 	}
 
 	bytes, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		return nil, fmt.Errorf("reading resp body %v", err)
+		return fmt.Errorf("reading resp body %v", err)
 	}
-	return bytes, nil
+	if err = proto.Unmarshal(bytes, out); err != nil {
+		return fmt.Errorf("decoding resp body: %v", err)
+	}
+	return nil
 }
